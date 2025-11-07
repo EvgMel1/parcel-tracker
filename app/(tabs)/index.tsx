@@ -1,3 +1,4 @@
+import CarrierSelectModal from "../components/CarrierSelectModal";
 import { useState } from 'react';
 import {
   View,
@@ -16,34 +17,51 @@ export default function HomeScreen() {
   const [loading, setLoading] = useState(false);
   const [trackingData, setTrackingData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
-
+  const [showCarrierModal, setShowCarrierModal] = useState(false);
+  const [selectedCarrier, setSelectedCarrier] = useState<any>(null);
+  
+  
   const handleTrack = async () => {
-    if (!trackingNumber.trim()) {
-      setError('Please enter a tracking number');
-      return;
-    }
-
-    setLoading(true);
     setError(null);
-    setTrackingData(null);
-
+    setLoading(true);
+  
     try {
-      const response = await fetch(`http://localhost:3001/api/track?number=${trackingNumber}`);
+      const res = await fetch(`/api/track?number=${trackingNumber}`);
+      const data = await res.json();
+  
+      // если не найдено — показываем окно выбора перевозчика
+      const rejectedError = data?.data?.rejected?.[0]?.error?.message;
 
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to track parcel');
+      if (rejectedError?.includes("does not register")) {
+        console.log("📦 Трек не зарегистрирован — показываем выбор перевозчика");
+        setShowCarrierModal(true);
+      } else {
+        setTrackingData(data);
       }
-
-      setTrackingData(data);
-    } catch (err: any) {
-      setError(err.message || 'Failed to track parcel');
+      
+    } catch (err) {
+      setError("Ошибка при получении данных");
     } finally {
       setLoading(false);
     }
   };
+
+  const handleCarrierSelect = async (carrier: any) => {
+    setSelectedCarrier(carrier);
+    setShowCarrierModal(false);
+    setLoading(true);
+  
+    try {
+      const res = await fetch(`/api/track?number=${trackingNumber}&carrier=${carrier.id}`);
+      const data = await res.json();
+      setTrackingData(data);
+    } catch (err) {
+      setError("Ошибка при запросе к API");
+    } finally {
+      setLoading(false);
+    }
+  };
+  
 
   const handleScan = () => {
     if (Platform.OS === 'web') {
@@ -97,7 +115,7 @@ export default function HomeScreen() {
           </View>
         )}
 
-        {trackingData && (
+{trackingData && (
           <View style={styles.resultContainer}>
             <Text style={styles.resultTitle}>Tracking Result</Text>
             <View style={styles.resultItem}>
@@ -134,10 +152,18 @@ export default function HomeScreen() {
             )}
           </View>
         )}
+
+        {/* 👇 вот это добавь перед закрывающими тегами */}
+        <CarrierSelectModal
+          show={showCarrierModal}
+          onClose={() => setShowCarrierModal(false)}
+          onSelect={handleCarrierSelect}
+        />
       </View>
     </ScrollView>
   );
 }
+
 
 const styles = StyleSheet.create({
   container: {
