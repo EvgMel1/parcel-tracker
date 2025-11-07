@@ -1,5 +1,5 @@
 import CarrierSelectModal from "../components/CarrierSelectModal";
-import { useState } from 'react';
+import { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -9,63 +9,68 @@ import {
   ScrollView,
   ActivityIndicator,
   Platform,
-} from 'react-native';
-import { Camera, Search } from 'lucide-react-native';
+} from "react-native";
+import { Camera, Search, Truck } from "lucide-react-native";
 
 export default function HomeScreen() {
-  const [trackingNumber, setTrackingNumber] = useState('');
+  const [trackingNumber, setTrackingNumber] = useState("");
   const [loading, setLoading] = useState(false);
   const [trackingData, setTrackingData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [showCarrierModal, setShowCarrierModal] = useState(false);
-  const [selectedCarrier, setSelectedCarrier] = useState<any>(null);
-  
-  
-  const handleTrack = async () => {
+  const [selectedCarrier, setSelectedCarrier] = useState<any>({
+    id: 100003,
+    name: "Авто поиск",
+  });
+  const [autoRefresh, setAutoRefresh] = useState(false);
+
+  // 🔁 автообновление каждые 20 секунд
+  useEffect(() => {
+    if (!autoRefresh || !trackingNumber) return;
+    const timer = setInterval(() => {
+      console.log("⏳ Автообновление трека...");
+      handleTrack(selectedCarrier);
+    }, 20000);
+    return () => clearInterval(timer);
+  }, [autoRefresh, trackingNumber, selectedCarrier]);
+
+  // 🚀 Запрос трека
+  const handleTrack = async (carrierParam?: any) => {
     setError(null);
     setLoading(true);
-  
-    try {
-      const res = await fetch(`/api/track?number=${trackingNumber}`);
-      const data = await res.json();
-  
-      // если не найдено — показываем окно выбора перевозчика
-      const rejectedError = data?.data?.rejected?.[0]?.error?.message;
 
-      if (rejectedError?.includes("does not register")) {
-        console.log("📦 Трек не зарегистрирован — показываем выбор перевозчика");
-        setShowCarrierModal(true);
+    try {
+      const carrierId = carrierParam?.id || selectedCarrier?.id || 100003;
+      const query = `/api/track?number=${trackingNumber}&carrier=${carrierId}`;
+      const res = await fetch(query);
+      const data = await res.json();
+
+      console.log("📦 Ответ /api/track:", data);
+
+      if (data.message?.includes("ожидаем обновления")) {
+        setTrackingData(data);
+        setAutoRefresh(true);
       } else {
         setTrackingData(data);
+        setAutoRefresh(false);
       }
-      
     } catch (err) {
+      console.error(err);
       setError("Ошибка при получении данных");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleCarrierSelect = async (carrier: any) => {
+  // 🎯 Выбор перевозчика
+  const handleCarrierSelect = (carrier: any) => {
     setSelectedCarrier(carrier);
     setShowCarrierModal(false);
-    setLoading(true);
-  
-    try {
-      const res = await fetch(`/api/track?number=${trackingNumber}&carrier=${carrier.id}`);
-      const data = await res.json();
-      setTrackingData(data);
-    } catch (err) {
-      setError("Ошибка при запросе к API");
-    } finally {
-      setLoading(false);
-    }
   };
-  
 
   const handleScan = () => {
-    if (Platform.OS === 'web') {
-      setError('Camera scanning is not available on web');
+    if (Platform.OS === "web") {
+      setError("Camera scanning is not available on web");
       return;
     }
   };
@@ -78,6 +83,7 @@ export default function HomeScreen() {
           Enter your tracking number to get real-time updates
         </Text>
 
+        {/* Поле ввода трека */}
         <View style={styles.inputContainer}>
           <TextInput
             style={styles.input}
@@ -90,15 +96,27 @@ export default function HomeScreen() {
           <TouchableOpacity
             style={styles.scanButton}
             onPress={handleScan}
-            disabled={Platform.OS === 'web'}>
+            disabled={Platform.OS === "web"}
+          >
             <Camera size={24} color="#fff" />
           </TouchableOpacity>
         </View>
 
+        {/* Кнопка выбора перевозчика */}
+        <TouchableOpacity
+          style={styles.carrierButton}
+          onPress={() => setShowCarrierModal(true)}
+        >
+          <Truck size={18} color="#3b82f6" />
+          <Text style={styles.carrierText}>{selectedCarrier.name}</Text>
+        </TouchableOpacity>
+
+        {/* Кнопка "Track" */}
         <TouchableOpacity
           style={[styles.trackButton, loading && styles.trackButtonDisabled]}
-          onPress={handleTrack}
-          disabled={loading}>
+          onPress={() => handleTrack()}
+          disabled={loading}
+        >
           {loading ? (
             <ActivityIndicator color="#fff" />
           ) : (
@@ -115,7 +133,8 @@ export default function HomeScreen() {
           </View>
         )}
 
-{trackingData && (
+        {/* Результат */}
+        {trackingData && (
           <View style={styles.resultContainer}>
             <Text style={styles.resultTitle}>Tracking Result</Text>
             <View style={styles.resultItem}>
@@ -134,12 +153,17 @@ export default function HomeScreen() {
                 <Text style={styles.resultValue}>{trackingData.carrier}</Text>
               </View>
             )}
+            {trackingData.status === "Pending" && (
+              <Text style={{ color: "#9ca3af", marginTop: 10 }}>
+                ⏳ Трек зарегистрирован, ожидаем обновления...
+              </Text>
+            )}
             {trackingData.events && trackingData.events.length > 0 && (
               <View style={styles.eventsContainer}>
                 <Text style={styles.eventsTitle}>Recent Events</Text>
                 {trackingData.events.map((event: any, index: number) => (
                   <View key={index} style={styles.eventItem}>
-                    <Text style={styles.eventDate}>{event.date}</Text>
+                    <Text style={styles.eventDate}>{event.time}</Text>
                     <Text style={styles.eventDescription}>
                       {event.description}
                     </Text>
@@ -153,7 +177,7 @@ export default function HomeScreen() {
           </View>
         )}
 
-        {/* 👇 вот это добавь перед закрывающими тегами */}
+        {/* Модалка выбора перевозчика */}
         <CarrierSelectModal
           show={showCarrierModal}
           onClose={() => setShowCarrierModal(false)}
@@ -164,132 +188,86 @@ export default function HomeScreen() {
   );
 }
 
-
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#0f0f0f',
-  },
-  content: {
-    padding: 20,
-    paddingTop: 60,
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: '700',
-    color: '#fff',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 16,
-    color: '#9ca3af',
-    marginBottom: 32,
-  },
-  inputContainer: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 16,
-  },
+  container: { flex: 1, backgroundColor: "#0f0f0f" },
+  content: { padding: 20, paddingTop: 60 },
+  title: { fontSize: 32, fontWeight: "700", color: "#fff", marginBottom: 8 },
+  subtitle: { fontSize: 16, color: "#9ca3af", marginBottom: 32 },
+  inputContainer: { flexDirection: "row", gap: 12, marginBottom: 12 },
   input: {
     flex: 1,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: "#1a1a1a",
     borderWidth: 1,
-    borderColor: '#2a2a2a',
+    borderColor: "#2a2a2a",
     borderRadius: 12,
     padding: 16,
     fontSize: 16,
-    color: '#fff',
+    color: "#fff",
   },
   scanButton: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: "#1a1a1a",
     borderWidth: 1,
-    borderColor: '#2a2a2a',
+    borderColor: "#2a2a2a",
     borderRadius: 12,
     width: 56,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
   },
+  carrierButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#111827",
+    borderWidth: 1,
+    borderColor: "#2a2a2a",
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    gap: 10,
+    marginBottom: 18,
+  },
+  carrierText: { color: "#3b82f6", fontSize: 15, fontWeight: "600" },
   trackButton: {
-    backgroundColor: '#3b82f6',
+    backgroundColor: "#3b82f6",
     borderRadius: 12,
     padding: 16,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
     gap: 8,
   },
-  trackButtonDisabled: {
-    opacity: 0.6,
-  },
-  trackButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
+  trackButtonDisabled: { opacity: 0.6 },
+  trackButtonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
   errorContainer: {
     marginTop: 16,
     padding: 16,
-    backgroundColor: '#7f1d1d',
+    backgroundColor: "#7f1d1d",
     borderRadius: 12,
   },
-  errorText: {
-    color: '#fca5a5',
-    fontSize: 14,
-  },
+  errorText: { color: "#fca5a5", fontSize: 14 },
   resultContainer: {
     marginTop: 24,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: "#1a1a1a",
     borderRadius: 12,
     padding: 20,
   },
-  resultTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#fff',
-    marginBottom: 16,
-  },
-  resultItem: {
-    marginBottom: 12,
-  },
-  resultLabel: {
-    fontSize: 14,
-    color: '#9ca3af',
-    marginBottom: 4,
-  },
-  resultValue: {
-    fontSize: 16,
-    color: '#fff',
-  },
+  resultTitle: { fontSize: 20, fontWeight: "600", color: "#fff", marginBottom: 16 },
+  resultItem: { marginBottom: 12 },
+  resultLabel: { fontSize: 14, color: "#9ca3af", marginBottom: 4 },
+  resultValue: { fontSize: 16, color: "#fff" },
   eventsContainer: {
     marginTop: 16,
     paddingTop: 16,
     borderTopWidth: 1,
-    borderTopColor: '#2a2a2a',
+    borderTopColor: "#2a2a2a",
   },
-  eventsTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#fff',
-    marginBottom: 12,
-  },
+  eventsTitle: { fontSize: 16, fontWeight: "600", color: "#fff", marginBottom: 12 },
   eventItem: {
     marginBottom: 16,
     paddingBottom: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#2a2a2a',
+    borderBottomColor: "#2a2a2a",
   },
-  eventDate: {
-    fontSize: 12,
-    color: '#9ca3af',
-    marginBottom: 4,
-  },
-  eventDescription: {
-    fontSize: 14,
-    color: '#fff',
-    marginBottom: 4,
-  },
-  eventLocation: {
-    fontSize: 12,
-    color: '#6b7280',
-  },
+  eventDate: { fontSize: 12, color: "#9ca3af", marginBottom: 4 },
+  eventDescription: { fontSize: 14, color: "#fff", marginBottom: 4 },
+  eventLocation: { fontSize: 12, color: "#6b7280" },
 });

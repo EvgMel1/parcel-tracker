@@ -5,18 +5,15 @@ import cors from "cors";
 import fetch from "node-fetch";
 import dotenv from "dotenv";
 import { fileURLToPath } from "url";
-import { createRequire } from "module";
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const require = createRequire(import.meta.url);
 
 const app = express();
 const port = process.env.PORT || 3001;
 
-// ---- Middleware ----
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "dist")));
 app.use(
@@ -25,7 +22,6 @@ app.use(
       "http://localhost:3001",
       "https://parcel-tracker-mauve.vercel.app",
       "https://parcel-tracker.vercel.app",
-      "https://sb18uydrxic-45cz--3001--cf284e50.local-corp.webcontainer.io",
     ],
     methods: ["GET", "POST", "OPTIONS"],
     allowedHeaders: ["Content-Type"],
@@ -33,6 +29,13 @@ app.use(
 );
 
 // ---- Helpers ----
+const API_BASE = "https://api.17track.net/track/v2.4";
+
+const makeHeaders = () => ({
+  "Content-Type": "application/json",
+  "17token": process.env.SEVENTEEN_API_KEY?.trim() || "",
+});
+
 const guessCarrier = (num, explicit) => {
   if (explicit) return Number(explicit);
   if (/^[A-Z]{2}\d{9}CN$/i.test(num)) return 3011; // China Post
@@ -59,76 +62,34 @@ const mapStatus = (raw) => {
 const extractEvents = (trackInfo) => {
   const providers = trackInfo?.tracking?.providers || [];
   const events = [];
-  providers.forEach((p) => {
-    (p.events || []).forEach((e) => {
+  providers.forEach((p) =>
+    (p.events || []).forEach((e) =>
       events.push({
         time: e.time || e.message_time || null,
         description: e.description || e.message || "",
         location: e.location || "",
         raw_status: e.status || "",
-      });
-    });
-  });
+      })
+    )
+  );
   events.sort((a, b) => new Date(b.time || 0) - new Date(a.time || 0));
   return events;
 };
 
-// ---- 17TRACK Base Config ----
-const API_BASE = "https://api.17track.net/track/v2.4";
-
-// ✅ функция для корректного создания заголовков (иначе Node их обрезает)
-const makeHeaders = () => {
-  const headers = new fetch.Headers();
-  headers.append("Content-Type", "application/json");
-  headers.append("17token", process.env.SEVENTEEN_API_KEY?.trim() || "");
-  return headers;
-};
-
-// ---- API: /api/carriers ----
-let carriersCache = null;
-let lastFetchTime = 0;
-
+// ---- Carriers ----
 app.get("/api/carriers", async (req, res) => {
-  try {
-    const now = Date.now();
-    if (carriersCache && now - lastFetchTime < 12 * 60 * 60 * 1000) {
-      return res.json({ source: "cache", data: carriersCache });
-    }
-
-    console.log("📦 Fetching carrier list from 17TRACK...");
-    const r = await fetch(`${API_BASE}/carriers`, {
-      method: "POST",
-      headers: makeHeaders(),
-      body: JSON.stringify({}),
-    });
-
-    const text = await r.text();
-    console.log("Carrier raw response:", text);
-    const json = JSON.parse(text);
-
-    if (json.code !== 0) {
-      console.error("17TRACK carrier API error:", json);
-      return res.status(500).json(json);
-    }
-
-    const list = (json?.data || []).map((c) => ({
-      id: c.id,
-      name: c.name,
-      code: c.code,
-      country: c.country,
-      site: c.site,
-    }));
-
-    carriersCache = list;
-    lastFetchTime = now;
-    res.json({ source: "api", count: list.length, data: list });
-  } catch (err) {
-    console.error("Carrier list error:", err);
-    res.status(500).json({ error: "Failed to load carriers" });
-  }
+  const carriers = [
+    { id: 100003, name: "Auto Detect", country: "Global" },
+    { id: 5053, name: "Nova Poshta", country: "UA" },
+    { id: 5006, name: "DHL", country: "DE" },
+    { id: 5004, name: "FedEx", country: "US" },
+    { id: 5002, name: "UPS", country: "US" },
+    { id: 3011, name: "China Post", country: "CN" },
+  ];
+  res.json({ source: "local", count: carriers.length, data: carriers });
 });
 
-// ---- API: /api/track ----
+// ---- TRACK ----
 app.get("/api/track", async (req, res) => {
   try {
     const number = String(req.query.number || "").trim();
@@ -136,14 +97,13 @@ app.get("/api/track", async (req, res) => {
       return res.status(400).json({ error: "Tracking number required" });
 
     const carrierQ = req.query.carrier ? String(req.query.carrier) : undefined;
-    const primaryCarrier = guessCarrier(number, carrierQ);
-
-    console.log("🔍 Requesting track info:", number, "carrier:", primaryCarrier);
+    const carrier = guessCarrier(number, carrierQ);
+    const headers = makeHeaders();
 
     const tryOnce = async (carrierCode) => {
       const r = await fetch(`${API_BASE}/gettrackinfo`, {
         method: "POST",
-        headers: makeHeaders(),
+        headers,
         body: JSON.stringify([{ number, carrier: carrierCode }]),
       });
       const text = await r.text();
@@ -151,83 +111,115 @@ app.get("/api/track", async (req, res) => {
         return JSON.parse(text);
       } catch {
         console.error("Invalid JSON from 17TRACK:", text);
-        throw new Error("Invalid JSON from 17TRACK");
+        return {};
       }
     };
 
-    const registerNumber = async (number, carrier) => {
-      console.log("📝 Registering tracking number...");
+    const registerNumber = async (carrierCode) => {
+      console.log(`🛰 Отправляем /register для ${number} (${carrierCode})`);
       const r = await fetch(`${API_BASE}/register`, {
         method: "POST",
-        headers: makeHeaders(),
-        body: JSON.stringify([{ number, carrier }]),
+        headers,
+        body: JSON.stringify([{ number, carrier: carrierCode }]),
       });
-      return r.json();
+      const text = await r.text();
+      console.log("📦 Register response:", text);
+      try {
+        return JSON.parse(text);
+      } catch {
+        return {};
+      }
     };
 
-    // Step 1 — initial try
-    let json = await tryOnce(primaryCarrier);
-    let accepted = json?.data?.accepted || [];
-    let item = accepted[0];
+    // --- шаг 1: пробуем сразу ---
+    let json = await tryOnce(carrier);
+    console.log("📊 gettrackinfo response:", JSON.stringify(json));
+    let item = json?.data?.accepted?.[0];
 
-    // Step 2 — register if needed
-    if (
-      !item &&
-      json?.data?.rejected?.[0]?.error?.message?.includes("does not register")
-    ) {
-      await registerNumber(number, primaryCarrier);
-      await new Promise((r) => setTimeout(r, 5000));
-      json = await tryOnce(primaryCarrier);
-      accepted = json?.data?.accepted || [];
-      item = accepted[0];
-    }
+// --- шаг 2: если трек не зарегистрирован ---
+let rejectedEntry = null;
 
-    // Step 3 — still nothing
+// иногда rejected приходит объектом, иногда массивом
+const rejectedData = json?.data?.rejected;
+if (Array.isArray(rejectedData)) {
+  rejectedEntry = rejectedData[0];
+} else if (rejectedData && typeof rejectedData === "object") {
+  rejectedEntry = rejectedData;
+}
+
+const err = rejectedEntry?.error || {};
+const errMsg = String(err.message || "").toLowerCase();
+
+const needRegister =
+  !item &&
+  (
+    errMsg.includes("does not register") ||
+    errMsg.includes("please register") ||
+    errMsg.includes("register first") ||
+    err.code === -18019902 ||
+    err.code === -18019901 ||
+    err.code === -18019900
+  );
+
+if (needRegister) {
+  console.log(`⚙️ Требуется регистрация трека ${number} (carrier ${carrier})`);
+  console.log("🛰 Отправляем запрос /register на 17TRACK...");
+
+  const reg = await registerNumber(carrier);
+  console.log("📦 Register response:", JSON.stringify(reg));
+
+  console.log("⏳ Ожидание 6 секунд перед повторной проверкой...");
+  await new Promise((r) => setTimeout(r, 6000));
+
+  json = await tryOnce(carrier);
+  item = json?.data?.accepted?.[0];
+}
+
+    
+
+    // --- шаг 3: если данных всё ещё нет ---
     if (!item) {
+      console.log("⚠️ Трек зарегистрирован, но данных нет.");
       return res.status(200).json({
         tracking_number: number,
-        status: "Registered",
-        message: "Tracking number registered, please check again shortly.",
+        carrier: carrierQ || "Auto Detect",
+        status: "Pending",
+        message: "Трек зарегистрирован, ожидаем обновления.",
+        events: [],
       });
     }
 
-    // Step 4 — success
+    // --- шаг 4: есть данные ---
     const ti = item.track_info;
     const statusRaw = ti?.latest_status?.status || "Unknown";
     const status = mapStatus(statusRaw);
     const events = extractEvents(ti);
-
     const providerName =
       ti?.tracking?.providers?.[0]?.provider?.name ||
       ti?.tracking?.providers?.[0]?.provider?.alias ||
       "Unknown carrier";
 
-    res.json({
+    return res.json({
       tracking_number: number,
-      status,
-      status_raw: statusRaw,
       carrier: providerName,
+      status,
       events,
     });
   } catch (err) {
-    console.error("Track API error:", err);
-    res.status(500).json({ error: String(err.message || err) });
+    console.error("❌ Track API error:", err);
+    return res.status(500).json({ error: err.message || "Unknown error" });
   }
 });
 
-// ---- SPA Fallback ----
+// ---- SPA fallback ----
 app.use((req, res, next) => {
   if (req.url.startsWith("/api/")) return next();
-
   const indexPath = path.join(__dirname, "dist", "index.html");
-  fs.access(indexPath, fs.constants.F_OK, (err) => {
-    if (err) {
-      res.status(404).send("index.html not found");
-    } else {
-      res.sendFile(indexPath);
-    }
-  });
+  if (fs.existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    res.status(404).send("index.html not found");
+  }
 });
 
-// ---- Export for Vercel ----
 export default app;

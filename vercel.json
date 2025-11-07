@@ -1,9 +1,14 @@
 {
+  "version": 2,
   "buildCommand": "npm run build",
-  "outputDirectory": "dist",
-  "framework": "vite",
-  "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/server.js" },
-    { "source": "/(.*)", "destination": "/" }
+  "outputDirectory": ".expo/web-build",
+  "functions": {
+    "api/**/*.js": {
+      "runtime": "@vercel/node@2.0.0"
+    }
+  },
+  "routes": [
+    { "src": "/api/(.*)", "dest": "/api/$1" },
+    { "src": "/(.*)", "dest": "/.expo/web-build/index.html" }
   ]
 }

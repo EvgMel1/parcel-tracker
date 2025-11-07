@@ -4,21 +4,16 @@
    "main": "expo-router/entry",
    "version": "1.0.0",
    "private": true,
-
    "engines": {
-    "node": "22.x"
-  },
+      "node": "22.x"
+   },
    "scripts": {
       "start": "node server.js",
       "dev": "expo start --web",
-     "build": "expo export --platform web",
-
-      "build:web": "expo export --platform web",
+      "build": "npx expo start --web --no-dev --minify",
       "lint": "expo lint",
       "typecheck": "tsc --noEmit"
    },
-
-   
    "dependencies": {
       "@expo/vector-icons": "^15.0.2",
       "@lucide/lab": "^0.1.2",
@@ -60,6 +55,7 @@
    },
    "devDependencies": {
       "@babel/core": "^7.25.2",
+      "@expo/metro-runtime": "^6.1.2",
       "@types/react": "~19.1.10",
       "netlify-cli": "^23.10.0",
       "typescript": "~5.9.2"
