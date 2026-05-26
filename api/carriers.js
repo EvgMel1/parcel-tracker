@@ -44,7 +44,7 @@ export default async function handler(req, res) {
 
     // всё хорошо — возвращаем carriers
     const carriers = json.data.map((c) => ({
-      id: c.id,
+      id: c.key,
       name: c.name,
       country: c.country_name || "",
     }));
