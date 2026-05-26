@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   RefreshControl,
   Image,
+  Platform,
   Animated,
   Share,
   ScrollView,
@@ -21,7 +22,19 @@ import {
 import { DeviceEventEmitter } from "react-native";
 import ParcelHeader from "../components/ParcelHeader";
 import React, { useState, useRef, useEffect } from "react";
-import MapView, { Marker, Polyline } from "react-native-maps";
+
+let MapView: any = null;
+let Marker: any = null;
+let Polyline: any = null;
+
+if (Platform.OS !== "web") {
+  const Maps = require("react-native-maps");
+
+  MapView = Maps.default;
+  Marker = Maps.Marker;
+  Polyline = Maps.Polyline;
+}
+
 
 // =============== HELPERS ===============
 
@@ -82,7 +95,7 @@ export default function ParcelDetails() {
     null
   );
 
-  const mapRef = useRef<MapView | null>(null);
+  const mapRef = useRef<any>(null);
   const scrollRef = useRef<ScrollView | null>(null);
   const rowOffsets = useRef<Record<number, number>>({});
 
@@ -265,7 +278,7 @@ export default function ParcelDetails() {
           )}
 
           {/* ===== INTERACTIVE MAP WITH ROUTE ===== */}
-          {coords.length > 0 && (
+          {Platform.OS !== "web" && MapView && coords.length > 0 && (
             <View style={styles.mapCard}>
               <MapView
                 ref={mapRef}
