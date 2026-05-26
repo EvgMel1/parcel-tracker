@@ -188,17 +188,7 @@ if (!item && json?.data?.rejected?.length) {
   });
 }
 
-    // 2) Регистрация при необходимости
-    const rejMsg =
-      json?.data?.rejected?.[0]?.error?.message ||
-      json?.data?.rejected?.[0]?.message ||
-      "";
-    if (!item && rejMsg.includes("does not register")) {
-      await registerNumber(number, carrier);
-      await new Promise((r) => setTimeout(r, 3000));
-      json = await tryOnce(number, carrier);
-      item = json?.data?.accepted?.[0];
-    }
+
 
     // 3) Если данных всё ещё нет
     if (!item) {
