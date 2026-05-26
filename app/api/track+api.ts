@@ -20,7 +20,7 @@ export async function GET(request: Request) {
       events: [
         {
           date: new Date().toISOString(),
-          description: 'Package received at sorting facility',
+          description: '675757657656 Package received at sorting facility',
           location: 'Distribution Center',
         },
         {

@@ -76,6 +76,41 @@ const extractEvents = (trackInfo) => {
   return events;
 };
 
+// ---- Fallback: Nova Poshta API ----
+async function trackNovaPoshta(number) {
+  try {
+    const r = await fetch("https://api.novaposhta.ua/v2.0/json/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        apiKey: process.env.NP_API_KEY || "",
+        modelName: "TrackingDocument",
+        calledMethod: "getStatusDocuments",
+        methodProperties: { Documents: [{ DocumentNumber: number }] },
+      }),
+    });
+    const json = await r.json();
+    const info = json.data?.[0];
+    if (!info) return null;
+
+    return {
+      tracking_number: number,
+      carrier: "Nova Poshta",
+      status: info.Status,
+      events: [
+        {
+          time: info.DateCreated,
+          description: info.Status,
+          location: info.CityRecipient || info.CitySender || "",
+        },
+      ],
+    };
+  } catch (err) {
+    console.error("Nova Poshta fallback error:", err);
+    return null;
+  }
+}
+
 // ---- Carriers ----
 app.get("/api/carriers", async (req, res) => {
   const carriers = [
@@ -100,6 +135,7 @@ app.get("/api/track", async (req, res) => {
     const carrier = guessCarrier(number, carrierQ);
     const headers = makeHeaders();
 
+    // ---- 17TRACK helpers ----
     const tryOnce = async (carrierCode) => {
       const r = await fetch(`${API_BASE}/gettrackinfo`, {
         method: "POST",
@@ -116,70 +152,75 @@ app.get("/api/track", async (req, res) => {
     };
 
     const registerNumber = async (carrierCode) => {
-      console.log(`🛰 Отправляем /register для ${number} (${carrierCode})`);
+      console.log(`🛰 Register ${number} (${carrierCode})`);
       const r = await fetch(`${API_BASE}/register`, {
         method: "POST",
         headers,
         body: JSON.stringify([{ number, carrier: carrierCode }]),
       });
-      const text = await r.text();
-      console.log("📦 Register response:", text);
-      try {
-        return JSON.parse(text);
-      } catch {
-        return {};
-      }
+      return r.json().catch(() => ({}));
     };
 
-    // --- шаг 1: пробуем сразу ---
+    const retrackNumber = async (carrierCode) => {
+      console.log(`🔁 Retrack ${number} (${carrierCode})`);
+      const r = await fetch(`${API_BASE}/retrack`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify([{ number, carrier: carrierCode }]),
+      });
+      return r.json().catch(() => ({}));
+    };
+
+    // ---- 1. первичная попытка ----
     let json = await tryOnce(carrier);
-    console.log("📊 gettrackinfo response:", JSON.stringify(json));
+    console.log("📊 gettrackinfo:", JSON.stringify(json));
     let item = json?.data?.accepted?.[0];
 
-// --- шаг 2: если трек не зарегистрирован ---
-let rejectedEntry = null;
+    // ---- 2. регистрация при необходимости ----
+    let rejectedEntry = json?.data?.rejected?.[0] || json?.data?.rejected;
+    const err = rejectedEntry?.error || {};
+    const errMsg = String(err.message || "").toLowerCase();
 
-// иногда rejected приходит объектом, иногда массивом
-const rejectedData = json?.data?.rejected;
-if (Array.isArray(rejectedData)) {
-  rejectedEntry = rejectedData[0];
-} else if (rejectedData && typeof rejectedData === "object") {
-  rejectedEntry = rejectedData;
-}
+    const needRegister =
+      !item &&
+      (
+        errMsg.includes("does not register") ||
+        errMsg.includes("please register") ||
+        errMsg.includes("register first") ||
+        err.code === -18019902 ||
+        err.code === -18019901 ||
+        err.code === -18019900
+      );
 
-const err = rejectedEntry?.error || {};
-const errMsg = String(err.message || "").toLowerCase();
+    if (needRegister) {
+      await registerNumber(carrier);
+      await retrackNumber(carrier);
+      console.log("⏳ Wait 20s before retry...");
+      await new Promise((r) => setTimeout(r, 20000));
+      json = await tryOnce(carrier);
+      item = json?.data?.accepted?.[0];
+    }
 
-const needRegister =
-  !item &&
-  (
-    errMsg.includes("does not register") ||
-    errMsg.includes("please register") ||
-    errMsg.includes("register first") ||
-    err.code === -18019902 ||
-    err.code === -18019901 ||
-    err.code === -18019900
-  );
+    // ---- 3. Повторные проверки ----
+    let attempts = 0;
+    while (!item && attempts < 2) {
+      console.log(`🔄 Attempt ${attempts + 1} retry check...`);
+      await new Promise((r) => setTimeout(r, 15000));
+      json = await tryOnce(carrier);
+      item = json?.data?.accepted?.[0];
+      attempts++;
+    }
 
-if (needRegister) {
-  console.log(`⚙️ Требуется регистрация трека ${number} (carrier ${carrier})`);
-  console.log("🛰 Отправляем запрос /register на 17TRACK...");
+    // ---- 4. Если данных нет — fallback на Nova Poshta ----
+    if (!item && carrier === 5053) {
+      console.log("⚙️ Using Nova Poshta fallback...");
+      const np = await trackNovaPoshta(number);
+      if (np) return res.json(np);
+    }
 
-  const reg = await registerNumber(carrier);
-  console.log("📦 Register response:", JSON.stringify(reg));
-
-  console.log("⏳ Ожидание 6 секунд перед повторной проверкой...");
-  await new Promise((r) => setTimeout(r, 6000));
-
-  json = await tryOnce(carrier);
-  item = json?.data?.accepted?.[0];
-}
-
-    
-
-    // --- шаг 3: если данных всё ещё нет ---
+    // ---- 5. Всё ещё нет данных ----
     if (!item) {
-      console.log("⚠️ Трек зарегистрирован, но данных нет.");
+      console.log("⚠️ No tracking data yet.");
       return res.status(200).json({
         tracking_number: number,
         carrier: carrierQ || "Auto Detect",
@@ -189,7 +230,7 @@ if (needRegister) {
       });
     }
 
-    // --- шаг 4: есть данные ---
+    // ---- 6. Есть данные ----
     const ti = item.track_info;
     const statusRaw = ti?.latest_status?.status || "Unknown";
     const status = mapStatus(statusRaw);

@@ -1,273 +1,648 @@
-import CarrierSelectModal from "../components/CarrierSelectModal";
-import { useState, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
+import { useRouter, useSegments } from "expo-router";
 import {
   View,
-  Text,
-  TextInput,
   TouchableOpacity,
+  Animated,
   StyleSheet,
+  TextInput,
+  Easing,
   ScrollView,
-  ActivityIndicator,
-  Platform,
+  ActivityIndicator, 
+  Text,
+  Pressable,
+  DeviceEventEmitter,
+  useWindowDimensions,
+  Alert,
 } from "react-native";
-import { Camera, Search, Truck } from "lucide-react-native";
+import { Search, Truck, Plus } from "lucide-react-native";
+import ToastOverlay from "../components/ToastOverlay";
+import Toast from "react-native-root-toast";
+import Header from "../components/Header";
+import EmptyBoxIcon from "../../assets/icons/empty-box.svg";
+import AnimatedPlusButton from "../components/AnimatedPlusButton";
+import InputModal from "../components/InputModal";
+import EditParcelModal from "../components/EditParcelModal";
+import SlideUpTracker from "../components/SlideUpTracker";
+import SwipeableCard, { SwipeableCardHandle } from "../components/SwipeableCard";
+import TrackingCard from "../components/TrackingCard";
 
-export default function HomeScreen() {
-  const [trackingNumber, setTrackingNumber] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [trackingData, setTrackingData] = useState<any>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [showCarrierModal, setShowCarrierModal] = useState(false);
-  const [selectedCarrier, setSelectedCarrier] = useState<any>({
-    id: 100003,
+
+type Carrier = {
+  id: number;
+  name: string;
+};
+
+type Parcel = {
+  number: string;
+  data: any;
+  carrier: Carrier;
+  title?: string;
+  pinned?: boolean;
+  archived?: boolean; 
+};
+
+
+ 
+
+export default function Index() {
+  const { width } = useWindowDimensions();
+
+const fabRef = useRef<any>(null);
+const lastScrollY = useRef(0);
+const scrollDirection = useRef<"up" | "down" | null>(null);
+const segments = useSegments();
+const currentScreen = segments[segments.length - 1];
+const isArchive = currentScreen === "archive";
+
+  const [toast, setToast] = useState<{ message: string; type?: string } | null>(null);
+  function showToast(message: string, type: "success" | "error" | "info" = "info") {
+  setToast({ message, type });
+  setTimeout(() => setToast(null), 3000);
+}
+
+  const cardRefs = useRef<Record<string, SwipeableCardHandle | null>>({});
+
+  const [loadingNumber, setLoadingNumber] = useState<string | null>(null);
+
+  const [searchVisible, setSearchVisible] = useState(false);
+const [searchQuery, setSearchQuery] = useState("");
+
+  const [anyMenuOpen, setAnyMenuOpen] = useState(false);
+  const [titleModalVisible, setTitleModalVisible] = useState(false);
+const [editModalVisible, setEditModalVisible] = useState(false);
+const [activeParcel, setActiveParcel] = useState<Parcel | null>(null);
+const [scrollEnabled, setScrollEnabled] = useState(true);
+  const [menuCloseTrigger, setMenuCloseTrigger] = useState(0);
+  const [selectedCarrier, setSelectedCarrier] = useState<Carrier>({
+    id: 1,
     name: "Авто поиск",
   });
-  const [autoRefresh, setAutoRefresh] = useState(false);
+  const [showTrackerSheet, setShowTrackerSheet] = useState(false);
+  const [parcels, setParcels] = useState<Parcel[]>([]);
+  const [archivedParcels, setArchivedParcels] = useState<Parcel[]>([]);
+  const router = useRouter();
 
-  // 🔁 автообновление каждые 20 секунд
-  useEffect(() => {
-    if (!autoRefresh || !trackingNumber) return;
-    const timer = setInterval(() => {
-      console.log("⏳ Автообновление трека...");
-      handleTrack(selectedCarrier);
-    }, 20000);
-    return () => clearInterval(timer);
-  }, [autoRefresh, trackingNumber, selectedCarrier]);
+  // === Удаление карточки ===
+  const handleDeleteParcel = useCallback((num: string) => {
+  console.log("Удаляем из state:", num);
+  setParcels((prev) => prev.filter((p) => p.number !== num));
+}, []);
 
-  // 🚀 Запрос трека
-  const handleTrack = async (carrierParam?: any) => {
-    setError(null);
-    setLoading(true);
+const [activeFilter, setActiveFilter] = useState("All");
 
+  // === Контроль глобального меню ===
+  const handleGlobalMenuToggle = useCallback((open: boolean) => {
+    setAnyMenuOpen(open);
+  }, []);
+
+
+useEffect(() => {
+  const subscription = DeviceEventEmitter.addListener("openTrackerSheet", () => {
+    setShowTrackerSheet(true);
+  });
+
+  return () => subscription.remove();
+}, []);
+
+  // === Запрос отслеживания ===
+  const handleTrack = useCallback(
+  async (num: string, carrier: Carrier, title?: string) => { // ✅ добавили title
+    if (!num.trim()) return;
+
+    setLoadingNumber(num);
     try {
-      const carrierId = carrierParam?.id || selectedCarrier?.id || 100003;
-      const query = `/api/track?number=${trackingNumber}&carrier=${carrierId}`;
-      const res = await fetch(query);
+      const carrierParam =
+        carrier.name === "Авто поиск" || carrier.id === 1
+          ? ""
+          : `&carrier=${carrier.id}`;
+
+      const res = await fetch(`/api/track?number=${num}${carrierParam}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
       const data = await res.json();
 
-      console.log("📦 Ответ /api/track:", data);
-
-      if (data.message?.includes("ожидаем обновления")) {
-        setTrackingData(data);
-        setAutoRefresh(true);
-      } else {
-        setTrackingData(data);
-        setAutoRefresh(false);
+      if (data.error || !data.status || data.status === "Pending") {
+        showToast(
+          "Отправление не найдено. Проверьте правильность выбора перевозчика или попробуйте позже.",
+          "info"
+        );
+        return;
       }
-    } catch (err) {
-      console.error(err);
-      setError("Ошибка при получении данных");
+
+      setParcels((prev) => {
+        const existingIndex = prev.findIndex((p) => p.number === num);
+        const updated = [...prev];
+
+        if (existingIndex >= 0) {
+  updated[existingIndex] = {
+    ...prev[existingIndex],
+    data,
+    carrier,
+    // если title пришёл — обновим, иначе оставим старый
+    title: title ?? prev[existingIndex].title,
+  };
+} else {
+  updated.push({ number: num, data, carrier, title });
+}
+
+        return updated;
+      });
+
+      showToast(`Посылка ${num} успешно добавлена!`, "success");
+    } catch (e) {
+      console.log("Track error:", e);
+      showToast("Не удалось получить данные по трек-номеру.", "error");
     } finally {
-      setLoading(false);
+      setLoadingNumber(null);
     }
+  },
+  []
+);
+
+
+
+const handleSetTitle = useCallback((num: string) => {
+  const parcel = parcels.find((p) => p.number === num);
+  setActiveParcel(parcel || null);
+  setTitleModalVisible(true);
+}, [parcels]);
+
+const handleArchiveParcel = (num: string) => {
+  setParcels((prev) => {
+    const target = prev.find((p) => p.number === num);
+    if (!target) return prev;
+
+    const remaining = prev.filter((p) => p.number !== num);
+
+    // отправляем ТОЛЬКО одну посылку
+    DeviceEventEmitter.emit("archiveAdd", {
+      ...target,
+      archived: true,
+      pinned: false,
+    });
+
+    router.push("/archive");
+    return remaining;
+  });
+
+  showToast("Посылка перемещена в архив", "info");
+};
+
+
+  // === Меню: редактировать ===
+  const handleEditParcel = (parcel: any) => {
+  // 🗑️ если пришёл delete-сигнал из TrackingCard
+  if (parcel.delete) {
+    setParcels((prev) => prev.filter((p) => p.number !== parcel.number));
+    return;
+  }
+
+  // ✏️ иначе — открыть окно редактирования
+  const found = parcels.find((p) => p.number === parcel.number);
+  setActiveParcel(found || null);
+  setEditModalVisible(true);
+};
+
+  // === Меню: закрепить ===
+  const handlePinParcel = (num: string) => {
+    setParcels((prev) => {
+      const updated = prev.map((p) =>
+        p.number === num ? { ...p, pinned: !p.pinned } : p
+      );
+      // Закреплённые вверх
+      return [...updated.filter((p) => p.pinned), ...updated.filter((p) => !p.pinned)];
+    });
   };
 
-  // 🎯 Выбор перевозчика
-  const handleCarrierSelect = (carrier: any) => {
-    setSelectedCarrier(carrier);
-    setShowCarrierModal(false);
-  };
+  const filteredParcels = parcels.filter((p) => {
+  const matchesSearch =
+    p.number.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (p.title?.toLowerCase() || "").includes(searchQuery.toLowerCase());
 
-  const handleScan = () => {
-    if (Platform.OS === "web") {
-      setError("Camera scanning is not available on web");
-      return;
-    }
-  };
+  if (!matchesSearch) return false;
+
+  if (activeFilter === "All") return true;
+
+  const status = p.data?.status || "";
+  return status === activeFilter;
+});
+
+// === Анимация появления/исчезновения FAB ===
+const fabAnim = useRef(new Animated.Value(0)).current; // 0 = видно, 1 = скрыто
+
+const hideFab = () => {
+  Animated.timing(fabAnim, {
+    toValue: 1,
+    duration: 250,
+    useNativeDriver: true,
+    easing: Easing.ease,
+  }).start();
+};
+
+const showFab = () => {
+  Animated.timing(fabAnim, {
+    toValue: 0,
+    duration: 250,
+    useNativeDriver: true,
+    easing: Easing.ease,
+  }).start();
+};
+
+
+
 
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.content}>
-        <Text style={styles.title}>Track Your Parcel</Text>
-        <Text style={styles.subtitle}>
-          Enter your tracking number to get real-time updates
-        </Text>
 
-        {/* Поле ввода трека */}
-        <View style={styles.inputContainer}>
-          <TextInput
-            style={styles.input}
-            placeholder="Enter tracking number"
-            placeholderTextColor="#6b7280"
-            value={trackingNumber}
-            onChangeText={setTrackingNumber}
-            autoCapitalize="characters"
-          />
+
+    <View style={styles.container}>
+     <Header onSearchPress={() => setSearchVisible(true)} />
+
+<View style={styles.filterContainer}>
+  <Text style={styles.filterLabel}>Sort by</Text>
+
+  <View style={{ height: 45 }}>
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={styles.filterScroll}
+      scrollEnabled={scrollEnabled}
+      nestedScrollEnabled={true}
+      style={{ overflowX: "scroll", width: "100%" }} // ✅ важно для веба
+    >
+      {["All", "Delivered", "In Transit", "Out for delivery"].map(
+        (label, i) => (
           <TouchableOpacity
-            style={styles.scanButton}
-            onPress={handleScan}
-            disabled={Platform.OS === "web"}
+            key={i}
+            activeOpacity={0.8}
+            style={[
+              styles.filterButton,
+              activeFilter === label && styles.filterButtonActive,
+            ]}
+            onPress={() => setActiveFilter(label)}
           >
-            <Camera size={24} color="#fff" />
+            <Text
+              style={[
+                styles.filterButtonText,
+                activeFilter === label && styles.filterButtonTextActive,
+              ]}
+            >
+              {label}
+            </Text>
           </TouchableOpacity>
-        </View>
-
-        {/* Кнопка выбора перевозчика */}
-        <TouchableOpacity
-          style={styles.carrierButton}
-          onPress={() => setShowCarrierModal(true)}
-        >
-          <Truck size={18} color="#3b82f6" />
-          <Text style={styles.carrierText}>{selectedCarrier.name}</Text>
-        </TouchableOpacity>
-
-        {/* Кнопка "Track" */}
-        <TouchableOpacity
-          style={[styles.trackButton, loading && styles.trackButtonDisabled]}
-          onPress={() => handleTrack()}
-          disabled={loading}
-        >
-          {loading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <>
-              <Search size={20} color="#fff" />
-              <Text style={styles.trackButtonText}>Track</Text>
-            </>
-          )}
-        </TouchableOpacity>
-
-        {error && (
-          <View style={styles.errorContainer}>
-            <Text style={styles.errorText}>{error}</Text>
-          </View>
-        )}
-
-        {/* Результат */}
-        {trackingData && (
-          <View style={styles.resultContainer}>
-            <Text style={styles.resultTitle}>Tracking Result</Text>
-            <View style={styles.resultItem}>
-              <Text style={styles.resultLabel}>Tracking Number:</Text>
-              <Text style={styles.resultValue}>
-                {trackingData.tracking_number}
-              </Text>
-            </View>
-            <View style={styles.resultItem}>
-              <Text style={styles.resultLabel}>Status:</Text>
-              <Text style={styles.resultValue}>{trackingData.status}</Text>
-            </View>
-            {trackingData.carrier && (
-              <View style={styles.resultItem}>
-                <Text style={styles.resultLabel}>Carrier:</Text>
-                <Text style={styles.resultValue}>{trackingData.carrier}</Text>
-              </View>
-            )}
-            {trackingData.status === "Pending" && (
-              <Text style={{ color: "#9ca3af", marginTop: 10 }}>
-                ⏳ Трек зарегистрирован, ожидаем обновления...
-              </Text>
-            )}
-            {trackingData.events && trackingData.events.length > 0 && (
-              <View style={styles.eventsContainer}>
-                <Text style={styles.eventsTitle}>Recent Events</Text>
-                {trackingData.events.map((event: any, index: number) => (
-                  <View key={index} style={styles.eventItem}>
-                    <Text style={styles.eventDate}>{event.time}</Text>
-                    <Text style={styles.eventDescription}>
-                      {event.description}
-                    </Text>
-                    {event.location && (
-                      <Text style={styles.eventLocation}>{event.location}</Text>
-                    )}
-                  </View>
-                ))}
-              </View>
-            )}
-          </View>
-        )}
-
-        {/* Модалка выбора перевозчика */}
-        <CarrierSelectModal
-          show={showCarrierModal}
-          onClose={() => setShowCarrierModal(false)}
-          onSelect={handleCarrierSelect}
-        />
-      </View>
+        )
+      )}
     </ScrollView>
+  </View>
+</View>
+
+
+      {searchVisible && (
+  <View style={styles.searchBox}>
+    <TextInput
+      style={styles.searchInput}
+      placeholder="Поиск по треку или описанию..."
+      placeholderTextColor="#777"
+      value={searchQuery}
+      onChangeText={setSearchQuery}
+      autoFocus
+      onBlur={() => {
+        if (!searchQuery.trim()) setSearchVisible(false);
+      }}
+      clearButtonMode="always"
+    />
+  </View>
+)}
+
+
+      {/* INPUT PANEL */}
+      <SlideUpTracker
+  visible={showTrackerSheet}
+  onClose={() => setShowTrackerSheet(false)}
+  onTrack={(num, carrier, title) => { // ✅ принимаем title
+    setSelectedCarrier(carrier);
+    handleTrack(num, carrier, title); // ✅ передаём дальше
+  }}
+/>
+
+{loadingNumber ? (
+  <View style={styles.loaderContainer}>
+    <ActivityIndicator size="large" color="#3B82F6" />
+    <Text style={styles.loaderText}>
+      Получаем данные по {loadingNumber}...
+    </Text>
+  </View>
+) : (
+  <ScrollView
+  style={{ flex: 1, zIndex: 0 }}
+  contentContainerStyle={{
+    paddingTop: 10,
+    
+    paddingBottom: 10,
+  }}
+  scrollEnabled={scrollEnabled}
+  onScroll={(e) => {
+  const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+  const currentY = contentOffset.y;
+  const maxScroll = contentSize.height - layoutMeasurement.height;
+  const diff = currentY - lastScrollY.current;
+
+
+  // Игнорируем bounce сверху и снизу
+  if (currentY < 0 || currentY > maxScroll + 20) return;
+
+  if (diff > 12 && scrollDirection.current !== "down") {
+  scrollDirection.current = "down";
+  fabRef.current?.hideButton?.();
+} else if (diff < -12 && scrollDirection.current !== "up") {
+  scrollDirection.current = "up";
+  fabRef.current?.showButton?.();
+}
+
+lastScrollY.current = currentY;
+}}
+scrollEventThrottle={16}
+>
+  {filteredParcels.length > 0 ? (
+    <View style={{  marginTop: -10 }}>
+      {filteredParcels.map((parcel) => (
+        <View key={parcel.number} style={{ marginBottom: 8 }}>
+          <SwipeableCard
+  ref={(r: SwipeableCardHandle | null) => {
+    cardRefs.current[parcel.number] = r;
+  }}
+            trackingNumber={parcel.number}
+  onDelete={() => handleDeleteParcel(parcel.number)}
+  onArchive={() => handleArchiveParcel(parcel.number )}
+  onScrollLock={(locked) => setScrollEnabled(!locked)}  // 👈 ВАЖНО
+>
+            <TrackingCard
+              trackingData={parcel.data}
+              trackingNumber={parcel.number}
+              onMenuToggle={handleGlobalMenuToggle}
+              menuCloseTrigger={menuCloseTrigger}
+              onSetTitle={handleSetTitle}
+              onEdit={handleEditParcel}
+              onPin={handlePinParcel}
+              onDelete={() =>
+                cardRefs.current[parcel.number]?.triggerDelete()
+              }
+              pinned={parcel.pinned}
+              title={parcel.title}
+            />
+          </SwipeableCard>
+        </View>
+      ))}
+    </View>
+  ) : (
+    <View style={styles.emptyContainer}>
+      <EmptyBoxIcon width={120} height={120} />
+      {searchQuery ? (
+        <Text style={{ color: "#777", marginTop: 10 }}>
+          Ничего не найдено по запросу “{searchQuery}”
+        </Text>
+      ) : null}
+    </View>
+  )}
+</ScrollView>
+
+)}
+
+{toast && (
+  <ToastOverlay
+    message={toast.message}
+    type={toast.type as any}
+    onHide={() => setToast(null)}
+  />
+)}
+
+      <View pointerEvents="box-none">
+  {anyMenuOpen && (
+    <TouchableOpacity
+      style={styles.globalOverlay}
+      activeOpacity={1}
+      onPress={() => {
+        setAnyMenuOpen(false);
+        setMenuCloseTrigger((v) => v + 1);
+      }}
+    />
+  )}
+
+  {/* Always active overlay for swipe closing */}
+  <Pressable
+  style={styles.globalOverlay}
+  onPress={() => DeviceEventEmitter.emit("tapOutsideSwipe")}
+  pointerEvents="box-none"
+/>
+</View>
+
+      
+      <EditParcelModal
+  visible={editModalVisible}
+  onClose={() => setEditModalVisible(false)}
+  initialNumber={activeParcel?.number || ""}
+  initialCarrier={activeParcel?.carrier || { id: 1, name: "Авто поиск" }}
+  onSubmit={({ number: newNumber, carrier: newCarrier, responseData }) => {
+    if (!activeParcel) return;
+
+    setParcels((prev) => {
+      const exists = prev.find((p) => p.number === newNumber);
+
+      // 🧩 Если номер уже есть — обновляем данные этого трека
+      if (exists) {
+        return prev.map((p) =>
+          p.number === newNumber
+            ? { ...p, carrier: newCarrier, data: responseData }
+            : p
+        );
+      }
+
+      // 🔄 Если номер изменился — обновляем активный
+      return prev.map((p) =>
+        p.number === activeParcel.number
+          ? { ...p, number: newNumber, carrier: newCarrier, data: responseData }
+          : p
+      );
+    });
+  }}
+/>
+
+<InputModal
+  visible={titleModalVisible}
+  title="Описание посылки"
+  placeholder="Введите описание..."
+  initialValue={activeParcel?.title || ""}
+  onClose={() => setTitleModalVisible(false)}
+  onSubmit={(text) => {
+    if (activeParcel) {
+      setParcels((prev) =>
+        prev.map((p) =>
+          p.number === activeParcel.number
+            ? { ...p, title: text }
+            : p
+        )
+      );
+    }
+  }}
+
+  
+
+  
+/>
+
+
+
+<AnimatedPlusButton
+
+  onPress={() => setShowTrackerSheet(true)}
+  ref={fabRef}
+  isActive={parcels.length === 0} // ✅ Анимация только если посылок нет
+/>
+
+
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#0f0f0f" },
-  content: { padding: 20, paddingTop: 60 },
-  title: { fontSize: 32, fontWeight: "700", color: "#fff", marginBottom: 8 },
-  subtitle: { fontSize: 16, color: "#9ca3af", marginBottom: 32 },
-  inputContainer: { flexDirection: "row", gap: 12, marginBottom: 12 },
-  input: {
+  container: {
     flex: 1,
-    backgroundColor: "#1a1a1a",
-    borderWidth: 1,
-    borderColor: "#2a2a2a",
-    borderRadius: 12,
-    padding: 16,
-    fontSize: 16,
-    color: "#fff",
+    backgroundColor: "#0A0A0C",
+    position: "relative",
   },
-  scanButton: {
-    backgroundColor: "#1a1a1a",
-    borderWidth: 1,
-    borderColor: "#2a2a2a",
-    borderRadius: 12,
-    width: 56,
-    justifyContent: "center",
-    alignItems: "center",
+
+
+  globalOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "transparent",
+    zIndex: 999,
   },
-  carrierButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#111827",
-    borderWidth: 1,
-    borderColor: "#2a2a2a",
-    borderRadius: 10,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    gap: 10,
-    marginBottom: 18,
-  },
-  carrierText: { color: "#3b82f6", fontSize: 15, fontWeight: "600" },
-  trackButton: {
+
+
+  plusBtn: {
+    width: 60,
+    height: 60,
     backgroundColor: "#3b82f6",
-    borderRadius: 12,
-    padding: 16,
-    flexDirection: "row",
+    borderRadius: 40,
     justifyContent: "center",
     alignItems: "center",
-    gap: 8,
+    marginTop: -20,
+    zIndex: 20,
   },
-  trackButtonDisabled: { opacity: 0.6 },
-  trackButtonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
-  errorContainer: {
-    marginTop: 16,
-    padding: 16,
-    backgroundColor: "#7f1d1d",
-    borderRadius: 12,
+
+  emptyContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: 200,
   },
-  errorText: { color: "#fca5a5", fontSize: 14 },
-  resultContainer: {
-    marginTop: 24,
-    backgroundColor: "#1a1a1a",
-    borderRadius: 12,
-    padding: 20,
-  },
-  resultTitle: { fontSize: 20, fontWeight: "600", color: "#fff", marginBottom: 16 },
-  resultItem: { marginBottom: 12 },
-  resultLabel: { fontSize: 14, color: "#9ca3af", marginBottom: 4 },
-  resultValue: { fontSize: 16, color: "#fff" },
-  eventsContainer: {
-    marginTop: 16,
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: "#2a2a2a",
-  },
-  eventsTitle: { fontSize: 16, fontWeight: "600", color: "#fff", marginBottom: 12 },
-  eventItem: {
-    marginBottom: 16,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: "#2a2a2a",
-  },
-  eventDate: { fontSize: 12, color: "#9ca3af", marginBottom: 4 },
-  eventDescription: { fontSize: 14, color: "#fff", marginBottom: 4 },
-  eventLocation: { fontSize: 12, color: "#6b7280" },
+
+loaderContainer: {
+  flexDirection: "column",
+  justifyContent: "center",
+  alignItems: "center",
+  marginTop: 40,
+},
+loaderText: {
+  color: "#9CA3AF",
+  fontSize: 14,
+  marginTop: 10,
+},
+
+searchBox: {
+  paddingHorizontal: 20,
+  marginBottom: 6,
+},
+
+searchInput: {
+  backgroundColor: "#141316",
+  borderRadius: 12,
+  paddingVertical: 10,
+  paddingHorizontal: 14,
+  color: "#fff",
+  fontSize: 15,
+  borderWidth: 1,
+  borderColor: "#2a2a2a",
+},
+
+floatingButton: {
+  position: "absolute",
+  bottom: 20, // немного выше нижнего меню
+  right: 25,
+  width: 70,
+  height: 70,
+  borderRadius: 60,
+  backgroundColor: "#3b82f6",
+  justifyContent: "center",
+  alignItems: "center",
+  shadowColor: "#000",
+  shadowOffset: { width: 0, height: 4 },
+  shadowOpacity: 0.3,
+  shadowRadius: 4,
+  elevation: 6,
+  zIndex: 999,
+},
+
+filterContainer: {
+  backgroundColor: "#101010",
+  paddingTop: 20,
+  paddingBottom: 12,
+},
+
+filterLabel: {
+  color: "#fff",
+  fontSize: 18,
+  fontFamily: "Poppins_600SemiBold",
+  marginLeft: 20,
+  marginBottom: 10,
+},
+
+filterButtons: {
+  flexDirection: "row",
+  flexWrap: "wrap",
+  gap: 8,
+},
+
+
+filterButton: {
+  backgroundColor: "#1a1a1a",
+  paddingVertical: 8,
+  paddingHorizontal: 16,
+  borderRadius: 10,
+  borderWidth: 0.5,
+  borderColor: "#2F2F2F",
+  justifyContent: "center",
+  alignItems: "center",
+  minWidth: 110, // чтобы кнопки не были слишком узкие
+},
+
+filterButtonActive: {
+  backgroundColor: "#0066FF",
+  borderColor: "#0066FF",
+},
+
+filterButtonText: {
+  color: "#E5E7EB",
+  fontSize: 14,
+  fontFamily: "Poppins_600SemiBold",
+},
+
+filterButtonTextActive: {
+  color: "#fff",
+},
+
+filterScroll: {
+  flexDirection: "row",
+  alignItems: "center",
+  paddingHorizontal: 20,
+  gap: 8,
+  paddingRight: 40, // чтобы не обрезалась последняя
+},
+
+
+
 });

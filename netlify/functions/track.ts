@@ -18,7 +18,7 @@ export async function handler(event: any) {
       events: [
         {
           date: new Date().toISOString(),
-          description: "Package received at sorting facility",
+          description: " Package received at sorting facility",
           location: "Distribution Center",
         },
         {

@@ -1,14 +1,28 @@
 {
   "version": 2,
-  "buildCommand": "npm run build",
-  "outputDirectory": ".expo/web-build",
+  "buildCommand": "npx expo export --platform web",
+  "outputDirectory": "dist",
   "functions": {
     "api/**/*.js": {
       "runtime": "@vercel/node@2.0.0"
     }
   },
-  "routes": [
-    { "src": "/api/(.*)", "dest": "/api/$1" },
-    { "src": "/(.*)", "dest": "/.expo/web-build/index.html" }
+  "rewrites": [
+    {
+      "source": "/api/:match*",
+      "destination": "/api/:match*"
+    },
+    {
+      "source": "/_expo/:match*",
+      "destination": "/dist/_expo/:match*"
+    },
+    {
+      "source": "/assets/:match*",
+      "destination": "/dist/assets/:match*"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/dist/index.html"
+    }
   ]
 }

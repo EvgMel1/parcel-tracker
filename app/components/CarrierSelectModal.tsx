@@ -5,6 +5,7 @@ import {
   TextInput,
   TouchableOpacity,
   FlatList,
+  Modal,
   ActivityIndicator,
   StyleSheet,
 } from "react-native";
@@ -27,19 +28,20 @@ export default function CarrierSelectModal({
   onSelect,
 }: CarrierSelectModalProps) {
   const [search, setSearch] = useState("");
-  const [carrierList, setCarrierList] = useState<Carrier[]>([]);
-  const [filtered, setFiltered] = useState<Carrier[]>([]);
+  const [carrierList, setCarrierList] = useState<any[]>([]);
+  const [filtered, setFiltered] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Загружаем список перевозчиков с API
+  // Загружаем список перевозчиков
   useEffect(() => {
     if (!show) return;
     setLoading(true);
-    fetch("/api/carriers")
+
+    fetch("/data/apicarrier.all.json")
       .then((res) => res.json())
       .then((data) => {
-        const list = data.data || data || [];
+        const list = Array.isArray(data) ? data : data.data || [];
         setCarrierList(list);
         setFiltered(list);
       })
@@ -50,14 +52,14 @@ export default function CarrierSelectModal({
       .finally(() => setLoading(false));
   }, [show]);
 
-  // Фильтр по поиску
+  // Фильтр поиска
   useEffect(() => {
     const q = search.toLowerCase();
     setFiltered(
       carrierList.filter(
         (c) =>
-          c.name.toLowerCase().includes(q) ||
-          (c.country && c.country.toLowerCase().includes(q))
+          c._name?.toLowerCase().includes(q) ||
+          c._country_iso?.toLowerCase().includes(q)
       )
     );
   }, [search, carrierList]);
@@ -65,6 +67,7 @@ export default function CarrierSelectModal({
   if (!show) return null;
 
   return (
+  <Modal visible={show} transparent animationType="fade">
     <View style={styles.overlay}>
       <View style={styles.modal}>
         <Text style={styles.title}>Выберите перевозчика</Text>
@@ -86,20 +89,47 @@ export default function CarrierSelectModal({
           <Text style={styles.errorText}>{error}</Text>
         ) : (
           <FlatList
-            data={filtered}
-            keyExtractor={(item) => item.id.toString()}
+            data={[
+              { id: 1, _name: "Auto search"},
+              ...filtered,
+            ]}
+            keyExtractor={(item: any) => String(item.key || item.id)}
             style={styles.list}
             renderItem={({ item }) => (
               <TouchableOpacity
-                style={styles.item}
-                onPress={() => onSelect(item)}
+                style={[
+                  styles.item,
+                  item._name === "Auto search" && {
+                    borderBottomWidth: 0.5,
+                    borderBottomColor: "#2F2F2F",
+                  },
+                ]}
+                onPress={() => {
+                  onSelect({
+                    id: item.key || item.id,
+                    name: item._name,
+                    country: item._country_iso || "",
+                  });
+                }}
               >
-                <View>
-                  <Text style={styles.itemName}>{item.name}</Text>
-                  {item.country && (
-                    <Text style={styles.itemCountry}>{item.country}</Text>
-                  )}
-                </View>
+                <Text
+                  style={[
+                    styles.itemName,
+                    item._name === "Auto search" && { color: "#3B82F6" },
+                  ]}
+                >
+                  {item._name}
+                </Text>
+                {item._country_iso && (
+                  <Text
+                    style={[
+                      styles.itemCountry,
+                      item._name === "Auto search" && { color: "#9ca3af" },
+                    ]}
+                  >
+                    {item._country_iso}
+                  </Text>
+                )}
               </TouchableOpacity>
             )}
             ListEmptyComponent={
@@ -113,7 +143,10 @@ export default function CarrierSelectModal({
         </TouchableOpacity>
       </View>
     </View>
-  );
+  </Modal>
+);
+
+  
 }
 
 // 💅 Темная тема + адаптивные стили
@@ -131,7 +164,7 @@ const styles = StyleSheet.create({
     width: "100%",
     maxWidth: 420,
     maxHeight: "85%",
-    backgroundColor: "#1a1a1a",
+    backgroundColor: "#101010",
     borderRadius: 18,
     padding: 20,
     shadowColor: "#000",
@@ -165,9 +198,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
     fontSize: 15,
   },
-  list: {
-    marginBottom: 12,
-  },
+  list: { marginBottom: 12 },
   item: {
     paddingVertical: 12,
     borderBottomWidth: 1,
