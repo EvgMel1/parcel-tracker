@@ -2,8 +2,8 @@
 const API_BASE = "https://api.17track.net/track/v2.4";
 
 export default async function handler(req, res) {
-  if (!process.env.SEVENTEEN_API_KEY) {
-    return res.status(500).json({ error: "SEVENTEEN_API_KEY is not set" });
+  if (!process.env.EXPO_PUBLIC_SEVENTEEN_API_KEY) {
+    return res.status(500).json({ error: "EXPO_PUBLIC_SEVENTEEN_API_KEY is not set" });
   }
 
   try {
@@ -11,7 +11,7 @@ export default async function handler(req, res) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "17token": process.env.SEVENTEEN_API_KEY,
+        "17token": process.env.EXPO_PUBLIC_SEVENTEEN_API_KEY,
       },
       body: JSON.stringify([]),
     });

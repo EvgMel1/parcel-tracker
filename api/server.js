@@ -33,7 +33,7 @@ const API_BASE = "https://api.17track.net/track/v2.4";
 
 const makeHeaders = () => ({
   "Content-Type": "application/json",
-  "17token": process.env.SEVENTEEN_API_KEY?.trim() || "",
+  "17token": process.env.EXPO_PUBLIC_SEVENTEEN_API_KEY?.trim() || "",
 });
 
 const guessCarrier = (num, explicit) => {
