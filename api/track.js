@@ -147,10 +147,10 @@ if (carrier === null) {
     let item =
   json?.data?.accepted?.[0] ||
   json?.data?.[0] ||
-  json?.accepted?.[0] ||
-  json?.[0] ||
   null;
 
+  const detectedCarrier =
+  json?.data?.accepted?.[0]?.carrier || 0;
   const rejMsg =
   json?.data?.rejected?.[0]?.error?.message ||
   json?.data?.rejected?.[0]?.message ||
@@ -160,26 +160,22 @@ if (carrier === null) {
 if (!item && rejMsg.includes("does not register")) {
   console.log("Registering tracking number...");
 
-  const regResult = await registerNumber(number, carrier);
+  const regResult = await registerNumber(number, detectedCarrier);
 console.log("REGISTER RESULT:", JSON.stringify(regResult));
 
   await new Promise((r) => setTimeout(r, 8000));
 
   json =
-    carrier === null
-      ? await safeFetchJSON(`${API_BASE}/gettrackinfo`, {
-          method: "POST",
-          headers: makeHeaders(),
-          body: JSON.stringify([{ number, auto_detection: true }]),
-        })
-      : await tryOnce(number, carrier);
+  carrier === null
+    ? await tryOnce(number, detectedCarrier)
+    : await tryOnce(number, carrier);
 
-  item =
-    json?.data?.accepted?.[0] ||
-    json?.data?.[0] ||
-    json?.accepted?.[0] ||
-    json?.[0] ||
-    null;
+item =
+  json?.data?.accepted?.[0] ||
+  json?.data?.[0] ||
+  json?.accepted?.[0] ||
+  json?.[0] ||
+  null;
 }
 
 // остальные ошибки
