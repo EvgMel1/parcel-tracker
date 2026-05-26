@@ -160,9 +160,10 @@ if (carrier === null) {
 if (!item && rejMsg.includes("does not register")) {
   console.log("Registering tracking number...");
 
-  await registerNumber(number, carrier);
+  const regResult = await registerNumber(number, carrier);
+console.log("REGISTER RESULT:", JSON.stringify(regResult));
 
-  await new Promise((r) => setTimeout(r, 3000));
+  await new Promise((r) => setTimeout(r, 8000));
 
   json =
     carrier === null
