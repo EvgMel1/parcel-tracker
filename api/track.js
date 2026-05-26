@@ -92,8 +92,10 @@ async function tryOnce(number, carrier) {
 }
 
 async function registerNumber(number, carrier) {
+  // Если carrier равен null или undefined, отправляем ТОЛЬКО number,
+  // чтобы запустить auto-detect на сервере 17TRACK
   const payload =
-    carrier === null
+    carrier === null || carrier === undefined
       ? [{ number }]
       : [{ number, carrier }];
 
@@ -134,63 +136,65 @@ export default async function handler(req, res) {
     const carrier = guessCarrier(number, carrierQ);
 
     // 1) Основной запрос
-    let json;
-if (carrier === null) {
-  json = await safeFetchJSON(`${API_BASE}/gettrackinfo`, {
-    method: "POST",
-    headers: makeHeaders(),
-    body: JSON.stringify([{ number, auto_detection: true }]),
-  });
-} else {
-  json = await tryOnce(number, carrier);
-}
+     // 1) Основной запрос
+    // Если carrier === null, отправляем только [{ number }] для автоопределения
+    const trackInfoPayload = carrier === null 
+      ? [{ number }] 
+      : [{ number, carrier }];
+
+    let json = await safeFetchJSON(`${API_BASE}/gettrackinfo`, {
+      method: "POST",
+      headers: makeHeaders(),
+      body: JSON.stringify(trackInfoPayload),
+    });
+
     let item =
-  json?.data?.accepted?.[0] ||
-  json?.data?.[0] ||
-  null;
+      json?.data?.accepted?.[0] ||
+      json?.data?.[0] ||
+      null;
 
-  const detectedCarrier =
-  json?.data?.accepted?.[0]?.carrier || 0;
-  const rejMsg =
-  json?.data?.rejected?.[0]?.error?.message ||
-  json?.data?.rejected?.[0]?.message ||
-  "";
+    const rejMsg =
+      json?.data?.rejected?.[0]?.error?.message ||
+      json?.data?.rejected?.[0]?.message ||
+      "";
 
-// если трек не зарегистрирован → регистрируем
-if (!item && rejMsg.includes("does not register")) {
-  console.log("Registering tracking number...");
+    // 2) Если трек еще не зарегистрирован в системе 17TRACK → регистрируем его
+    if (!item && rejMsg.includes("does not register")) {
+      console.log("Registering tracking number...");
 
-  const regResult = await registerNumber(number, detectedCarrier);
-console.log("REGISTER RESULT:", JSON.stringify(regResult));
+      // Передаем исходный carrier (если он null, registerNumber отправит запрос для auto-detect)
+      const regResult = await registerNumber(number, carrier);
+      console.log("REGISTER RESULT:", JSON.stringify(regResult));
 
-  await new Promise((r) => setTimeout(r, 8000));
+      // Ждем 8 секунд, пока 17TRACK распознает службу и свяжется с ней
+      await new Promise((r) => setTimeout(r, 8000));
 
-  json =
-  carrier === null
-    ? await tryOnce(number, detectedCarrier)
-    : await tryOnce(number, carrier);
+      // Повторно запрашиваем данные
+      json = await safeFetchJSON(`${API_BASE}/gettrackinfo`, {
+        method: "POST",
+        headers: makeHeaders(),
+        body: JSON.stringify(trackInfoPayload),
+      });
 
-item =
-  json?.data?.accepted?.[0] ||
-  json?.data?.[0] ||
-  json?.accepted?.[0] ||
-  json?.[0] ||
-  null;
-}
+      item =
+        json?.data?.accepted?.[0] ||
+        json?.data?.[0] ||
+        json?.accepted?.[0] ||
+        json?.[0] ||
+        null;
+    }
 
-// остальные ошибки
-if (!item && json?.data?.rejected?.length) {
-  console.warn("17track rejected:", json.data.rejected[0]);
+    // Обработка остальных критических ошибок (неверный формат и т.д.)
+    if (!item && json?.data?.rejected?.length) {
+      console.warn("17track rejected:", json.data.rejected[0]);
 
-  return res.status(404).json({
-    error: "not_found",
-    message:
-      json.data.rejected[0]?.error?.message ||
-      "Трек-номер не найден или имеет неверный формат.",
-  });
-}
-
-
+      return res.status(404).json({
+        error: "not_found",
+        message:
+          json.data.rejected[0]?.error?.message ||
+          "Трек-номер не найден или имеет неверный формат.",
+      });
+    }
 
     // 3) Если данных всё ещё нет
     if (!item) {
