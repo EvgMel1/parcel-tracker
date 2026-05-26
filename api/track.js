@@ -92,10 +92,15 @@ async function tryOnce(number, carrier) {
 }
 
 async function registerNumber(number, carrier) {
+  const payload =
+    carrier === null
+      ? [{ number }]
+      : [{ number, carrier }];
+
   return safeFetchJSON(`${API_BASE}/register`, {
     method: "POST",
     headers: makeHeaders(),
-    body: JSON.stringify([{ number, carrier }]),
+    body: JSON.stringify(payload),
   });
 }
 
