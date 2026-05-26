@@ -20,7 +20,7 @@ function guessCarrier(num, explicit) {
   if (explicit) return Number(explicit);
 
   // 🧠 Если включён авто поиск — вернём null, чтобы API сам определил
-  return null;
+  return 100003;
 }
 
 const STATUS_MAP = {
@@ -94,10 +94,7 @@ async function tryOnce(number, carrier) {
 async function registerNumber(number, carrier) {
   // Если carrier равен null или undefined, отправляем ТОЛЬКО number,
   // чтобы запустить auto-detect на сервере 17TRACK
-  const payload =
-    carrier === null || carrier === undefined
-      ? [{ number }]
-      : [{ number, carrier }];
+  const payload = [{ number, carrier }];
 
   return safeFetchJSON(`${API_BASE}/register`, {
     method: "POST",
@@ -138,9 +135,7 @@ export default async function handler(req, res) {
     // 1) Основной запрос
      // 1) Основной запрос
     // Если carrier === null, отправляем только [{ number }] для автоопределения
-    const trackInfoPayload = carrier === null 
-      ? [{ number }] 
-      : [{ number, carrier }];
+    const trackInfoPayload = [{ number, carrier }];
 
     let json = await safeFetchJSON(`${API_BASE}/gettrackinfo`, {
       method: "POST",
