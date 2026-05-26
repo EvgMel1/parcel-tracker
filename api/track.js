@@ -146,8 +146,40 @@ if (carrier === null) {
   json?.[0] ||
   null;
 
-  if (!item && json?.data?.rejected?.length) {
+  const rejMsg =
+  json?.data?.rejected?.[0]?.error?.message ||
+  json?.data?.rejected?.[0]?.message ||
+  "";
+
+// если трек не зарегистрирован → регистрируем
+if (!item && rejMsg.includes("does not register")) {
+  console.log("Registering tracking number...");
+
+  await registerNumber(number, carrier);
+
+  await new Promise((r) => setTimeout(r, 3000));
+
+  json =
+    carrier === null
+      ? await safeFetchJSON(`${API_BASE}/gettrackinfo`, {
+          method: "POST",
+          headers: makeHeaders(),
+          body: JSON.stringify([{ number, auto_detection: true }]),
+        })
+      : await tryOnce(number, carrier);
+
+  item =
+    json?.data?.accepted?.[0] ||
+    json?.data?.[0] ||
+    json?.accepted?.[0] ||
+    json?.[0] ||
+    null;
+}
+
+// остальные ошибки
+if (!item && json?.data?.rejected?.length) {
   console.warn("17track rejected:", json.data.rejected[0]);
+
   return res.status(404).json({
     error: "not_found",
     message:
