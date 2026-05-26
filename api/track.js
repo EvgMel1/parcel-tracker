@@ -116,8 +116,8 @@ async function getTrackList(number, carrier) {
 
 export default async function handler(req, res) {
   try {
-    if (!process.env.SEVENTEEN_API_KEY) {
-      return res.status(500).json({ error: "SEVENTEEN_API_KEY is not set" });
+    if (!process.env.EXPO_PUBLIC_SEVENTEEN_API_KEY) {
+      return res.status(500).json({ error: "EXPO_PUBLIC_SEVENTEEN_API_KEY is not set is not set" });
     }
 
     const number = String(req.query.number || "").trim();
